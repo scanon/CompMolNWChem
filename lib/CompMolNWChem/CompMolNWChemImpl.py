@@ -16,6 +16,7 @@ import zipfile
 import uuid
 import copy
 import shutil
+import requests
 
 from pybel import *
 from rdkit import Chem
@@ -47,8 +48,8 @@ class CompMolNWChem:
     # the latter method is running.
     ######################################### noqa
     VERSION = "0.0.1"
-    GIT_URL = "https://github.com/nkkchem/CompMolNWChem.git"
-    GIT_COMMIT_HASH = "0e157ea3f395c544a04c1542473be59ec39129ef"
+    GIT_URL = "git@github.com:scanon/CompMolNWChem.git"
+    GIT_COMMIT_HASH = "ccbbb1a1e3b1812da193a9c9bf6cc487fef78b21"
 
     #BEGIN_CLASS_HEADER
     def _generate_output_file_list(self, result_directory):
@@ -110,77 +111,29 @@ class CompMolNWChem:
             else:
                 raise
 
-    def _save_to_ws_and_report(self, ws_id, source, compoundset, message=None):
-        """Save compound set to the workspace and make report"""
-        info = self.dfu.save_objects(
-            {'id': ws_id,
-             "objects": [{
-                 "type": "KBaseBiochem.CompoundSet",
-                 "data": compoundset,
-                 "name": compoundset['name']
-             }]})[0]
-        compoundset_ref = "%s/%s/%s" % (info[6], info[0], info[4])
-        if not message:
-            message = 'Imported %s as %s' % (source, info[1])
-        report_params = {
-            'objects_created': [{'ref': compoundset_ref,
-                                 'description': 'Compound Set'}],
-            'message': message,
-            'workspace_name': info[7],
-            'report_object_name': 'compound_set_creation_report'
-        }
-
-        # Construct the output to send back
-        report_client = KBaseReport(self.callback_url)
-        report_info = report_client.create_extended_report(report_params)
-        output = {'report_name': report_info['name'],
-                  'report_ref': report_info['ref'],
-                  'compoundset_ref': compoundset_ref}
-        return output
-
-    #END_CLASS_HEADER
-
-    # config contains contents of config file in a hash or None if it couldn't
-    # be found
-    def __init__(self, config):
-        #BEGIN_CONSTRUCTOR
-        self.config = config
-        self.callback_url = os.environ['SDK_CALLBACK_URL']
-        self.dfu = DataFileUtil(self.callback_url)
-        self.comp = CompoundSetUtils(self.callback_url)
-        self.scratch = config['scratch']
-        logging.basicConfig(format='%(created)s %(levelname)s: %(message)s',
-                            level=logging.INFO)
-        #self.scratch = config['scratch']
-
-        #END_CONSTRUCTOR
-        pass
-
-
-    def run_CompMolNWChem(self, ctx, params):
-        """
-        This example function accepts any number of parameters and returns results in a KBaseReport
-        :param params: instance of mapping from String to unspecified object
-        :returns: instance of type "ReportResults" -> structure: parameter
-           "report_name" of String, parameter "report_ref" of String
-        """
-        # ctx is the context object
-        # return variables are: output
-        #BEGIN run_CompMolNWChem
-
-        # Initial Tests to Check for Proper Inputs
-
+    def _validate_params(self, params):
         for name in ['Input_File','calculation_type','workspace_name']:
             if name not in params:
                 raise ValueError('Parameter "' + name + '"is required but missing')
         if not isinstance(params['Input_File'], str):
             raise ValueError('Input_File must be a string')
 
-        
+    def _read_inputs(self, params, token):
         # Load the tsv file into a compound set using DataFileUtil methods
+        # uri = 'https://appdev.kbase.us/services/staging_service/download/%s' % (params['Input_File'])
+        uri = '%s/download/%s' % (self.staging, params['Input_File'])
+        tsv = requests.get(uri, headers={'Authorization':  token})
+        if tsv.status_code != 200:
+             print(tsv)
+             print(uri)
+             raise ValueError("Error retreiving TSV file not found")
+        scratch_file_path = os.path.join(self.scratch, 'input.tsv')
+        with open(scratch_file_path, 'w') as f:
+            f.write(tsv.text)
         
-        scratch_file_path = self.dfu.download_staging_file({'staging_file_subdir_path':params['Input_File']}
-                                       ).get('copy_file_path')
+       
+        #scratch_file_path = self.dfu.download_staging_file({'staging_file_subdir_path':params['Input_File']}
+        #                               ).get('copy_file_path')
 
         #print('Scratch File Path: ',scratch_file_path)
 
@@ -198,24 +151,21 @@ class CompMolNWChem:
         else:
             raise ValueError('Invalid input file type. Expects .tsv or .sdf')
 
-        #DEBUG::
-        #print('Compounds:',compounds)
-
         compoundset = {
             'id': params['Input_File'],
             'name': params['Input_File'],
             'description': 'Compound Set produced from %s' % file_name,
             'compounds': compounds,
         }
+        return compoundset
 
-        # Finish Reading in Compound Set
-        
+    def _process(self, compoundset):
         # Read ids and smiles from compound set for nwchem input
         
         ids = []
         smiles = []
 
-        for d in compounds:
+        for d in compoundset['compounds']:
            ids.append(d['id'])
            smiles.append(d['smiles'])
         #print(ids)
@@ -245,6 +195,75 @@ class CompMolNWChem:
 
             mul.calculate(ids[i])
 
+
+    def _save_to_ws_and_report(self, ws_id, source, compoundset, output_files, message=None):
+        """Save compound set to the workspace and make report"""
+        info = self.dfu.save_objects(
+            {'id': ws_id,
+             "objects": [{
+                 "type": "KBaseBiochem.CompoundSet",
+                 "data": compoundset,
+                 "name": compoundset['name']
+             }]})[0]
+        compoundset_ref = "%s/%s/%s" % (info[6], info[0], info[4])
+        if not message:
+            message = 'Imported %s as %s' % (source, info[1])
+        report_params = {
+            'objects_created': [{'ref': compoundset_ref,
+                                 'description': 'Compound Set'}],
+            'message': message,
+            'workspace_name': info[7],
+            'file_links': output_files,
+            'report_object_name': 'compound_set_creation_report'
+        }
+
+        # Construct the output to send back
+        report_client = KBaseReport(self.callback_url)
+        report_info = report_client.create_extended_report(report_params)
+        output = {'report_name': report_info['name'],
+                  'report_ref': report_info['ref'],
+                  'compoundset_ref': compoundset_ref}
+        return output
+
+    #END_CLASS_HEADER
+
+    # config contains contents of config file in a hash or None if it couldn't
+    # be found
+    def __init__(self, config):
+        #BEGIN_CONSTRUCTOR
+        self.config = config
+        self.callback_url = os.environ['SDK_CALLBACK_URL']
+        self.dfu = DataFileUtil(self.callback_url)
+        self.comp = CompoundSetUtils(self.callback_url)
+        self.scratch = config['scratch']
+        self.staging = '%s/staging_service' % (config['kbase-endpoint'])
+        logging.basicConfig(format='%(created)s %(levelname)s: %(message)s',
+                            level=logging.INFO)
+        #END_CONSTRUCTOR
+        pass
+
+
+    def run_CompMolNWChem(self, ctx, params):
+        """
+        This example function accepts any number of parameters and returns results in a KBaseReport
+        :param params: instance of mapping from String to unspecified object
+        :returns: instance of type "ReportResults" -> structure: parameter
+           "report_name" of String, parameter "report_ref" of String
+        """
+        # ctx is the context object
+        # return variables are: output
+        #BEGIN run_CompMolNWChem
+
+        # Initial Tests to Check for Proper Inputs
+        self._validate_params(params)
+
+       
+        # Prepare inputs 
+        compoundset = self._read_inputs(params, ctx['token'])
+
+        # Finish Reading in Compound Set
+        self._process(compoundset) 
+        
         # Build KBase Output. Should output entire /simulation directory and build a CompoundSet with Mol2 Files
 
         result_directory = '/simulation/'
@@ -282,34 +301,48 @@ class CompMolNWChem:
         output_files = self._generate_output_file_list(self.scratch)
 
 
-        report_params = {'message': message,
-                         'workspace_id': params['workspace_id'],
-                         'objects_created': [],
-                         'file_links': output_files,
-                         'report_object_name': 'kb_deseq2_report_' + str(uuid.uuid4())}
+        #report_params = {'message': message,
+        #                 'workspace_id': params['workspace_id'],
+        #                 'objects_created': [],
+        #                 'file_links': output_files,
+        #                 'report_object_name': 'kb_deseq2_report_' + str(uuid.uuid4())}
 
-        report = KBaseReport(self.callback_url)
+        #report = KBaseReport(self.callback_url)
         
-        report_info = report.create_extended_report(report_params)
+        #report_info = report.create_extended_report(report_params)
 
-        output = {
-            'report_name': report_info['name'],
-            'report_ref': report_info['ref'],
-        }
+        #output = {
+        #    'report_name': report_info['name'],
+        #    'report_ref': report_info['ref'],
+        #}
 
-        output2 = self._save_to_ws_and_report(
-            params['workspace_id'],'', compoundset_copy,
+        output = self._save_to_ws_and_report(
+            params['workspace_id'],'', compoundset_copy, output_files,
             message=message)
             
-        
-        return [output,output2]
-
-
         #END run_CompMolNWChem
 
         # At some point might do deeper type checking...
         if not isinstance(output, dict):
             raise ValueError('Method run_CompMolNWChem return value ' +
+                             'output is not type dict as required.')
+        # return the results
+        return [output]
+
+    def run_CompMolNWChem_hpc(self, ctx, params):
+        """
+        :param params: instance of mapping from String to unspecified object
+        :returns: instance of type "ReportResults" -> structure: parameter
+           "report_name" of String, parameter "report_ref" of String
+        """
+        # ctx is the context object
+        # return variables are: output
+        #BEGIN run_CompMolNWChem_hpc
+        #END run_CompMolNWChem_hpc
+
+        # At some point might do deeper type checking...
+        if not isinstance(output, dict):
+            raise ValueError('Method run_CompMolNWChem_hpc return value ' +
                              'output is not type dict as required.')
         # return the results
         return [output]

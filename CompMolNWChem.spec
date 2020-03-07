@@ -13,4 +13,6 @@ module CompMolNWChem {
     */
     funcdef run_CompMolNWChem(mapping<string,UnspecifiedObject> params) returns (ReportResults output) authentication required;
 
+    funcdef run_CompMolNWChem_hpc(mapping<string,UnspecifiedObject> params) returns (ReportResults output) authentication required;
+
 };

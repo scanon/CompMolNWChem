@@ -342,6 +342,10 @@ class Application(object):
                              name='CompMolNWChem.run_CompMolNWChem',
                              types=[dict])
         self.method_authentication['CompMolNWChem.run_CompMolNWChem'] = 'required'  # noqa
+        self.rpc_service.add(impl_CompMolNWChem.run_CompMolNWChem_hpc,
+                             name='CompMolNWChem.run_CompMolNWChem_hpc',
+                             types=[dict])
+        self.method_authentication['CompMolNWChem.run_CompMolNWChem_hpc'] = 'required'  # noqa
         self.rpc_service.add(impl_CompMolNWChem.status,
                              name='CompMolNWChem.status',
                              types=[dict])
