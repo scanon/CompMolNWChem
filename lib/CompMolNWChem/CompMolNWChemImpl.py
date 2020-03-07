@@ -71,6 +71,7 @@ class CompMolNWChem:
                 for file in files:
                     if not (file.endswith('.zip') or
                             file.endswith('.png') or
+                            file.startswith('input.tsv') or
                             file.endswith('.DS_Store')):
                         zip_file.write(os.path.join(root, file), 
                                        os.path.join(os.path.basename(root), file))
@@ -288,7 +289,7 @@ class CompMolNWChem:
 
         ## Create Extended Report
 
-        output_files = self._generate_output_file_list(os.path.join(self.scratch, 'dft'))
+        output_files = self._generate_output_file_list(self.scratch)
 
 
         #report_params = {'message': message,
