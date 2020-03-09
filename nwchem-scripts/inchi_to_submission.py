@@ -21,49 +21,14 @@ import sys
 import subprocess
 from pybel import *
 from csv import DictReader
+from installed_clients.specialClient import special
 
 # Generate dft folder from inchi string
 
 #os.system('rm -rf Z* A* K* D* F* P* W* X*')
 
-def inchi_to_dft(InChI_key,InChIes):
-    os.chdir('../../../simulation')
-    dd = dict(zip(InChI_key, InChIes))
-    #print('dd:',dd)
-    #print('dd_items:',dd.items())
-    #dd = dict(InChI_key=InChIes)
-    #print(dd)
-    for key, value in dd.items():
-        os.mkdir(key)
-        os.chdir(key)
-        #print('key:',key)
-        #print('value:',value)
-        #m4 = Chem.inchi.MolFromInchi(value)
-        m4 = Chem.MolFromSmiles(value)
-        #print('m4:',m4)
-        AllChem.Compute2DCoords(m4)
-        m5 = Chem.AddHs(m4)
-        #print('m5',m5)
-        if m5.GetNumAtoms() > 110:
-            AllChem.EmbedMolecule(m5, useRandomCoords=True)
-        else:
-            AllChem.EmbedMolecule(m5)
-    
-        AllChem.MMFFOptimizeMolecule(m5)
-        ii = Chem.MolToMolBlock(m5).splitlines()
-    
-        os.mkdir('dft')   # create dft files
-        os.chdir('dft')
-    
-        f=open(str(key)+".xyz", 'w')
-        f.write(str(m5.GetNumAtoms()))
-        f.write('\n\n')
-        for i in range(4, 4+m5.GetNumAtoms()):
-            jj=' '.join((ii[i].split()))
-            kk=jj.split()
-            f.write("{}\t{:>8}  {:>8}  {:>8}\n".format(kk[3], kk[0], kk[1], kk[2]))
-        f.close()
 
+def _write_nw_file(key, m5):
     #
     #   write .nw file
     #
@@ -109,6 +74,72 @@ def inchi_to_dft(InChI_key,InChIes):
         nw.close()
         
         nwfile = str(key)+".nw"
+
+def _run_hpc(run_list, callback_url, token):
+    print("Submitting SLURM")
+    sr = special(callback_url, token=token)
+    with open('slurm.sl', 'w') as f:
+        f.write("#/bin/sh\n")
+        f.write("#SBATCH -c haswell -t 30 -q debug -n 4\n")
+        f.write("#SBATCH --image=scanon/nwchem:latest\n")
+        for key in run_list:
+            out_file = str(key) +'_nwchem.out'
+            f.write("chdir {}/dft\n".format(str(key)))
+            f.write("srun shifter nwchem *.nw > {}\n".format(out_file))
+            f.write("chdir ../..\n")
+    p = {'submit_script': 'slurm.sl'}
+    res = sr.slurm(p)
+    print('slurm'+str(res))
+
+def inchi_to_dft(InChI_key, InChIes, hpc=False, callback_url=None, token=None):
+    print(os.getcwd())
+    os.mkdir('simulation')
+    os.chdir('simulation')
+    dd = dict(zip(InChI_key, InChIes))
+    #print('dd:',dd)
+    #print('dd_items:',dd.items())
+    #dd = dict(InChI_key=InChIes)
+    #print(dd)
+    run_list = []
+    for key, value in dd.items():
+        os.mkdir(key)
+        os.chdir(key)
+        #print('key:',key)
+        #print('value:',value)
+        #m4 = Chem.inchi.MolFromInchi(value)
+        m4 = Chem.MolFromSmiles(value)
+        #print('m4:',m4)
+        AllChem.Compute2DCoords(m4)
+        m5 = Chem.AddHs(m4)
+        #print('m5',m5)
+        if m5.GetNumAtoms() > 110:
+            AllChem.EmbedMolecule(m5, useRandomCoords=True)
+        else:
+            AllChem.EmbedMolecule(m5)
+    
+        AllChem.MMFFOptimizeMolecule(m5)
+        ii = Chem.MolToMolBlock(m5).splitlines()
+    
+        os.mkdir('dft')   # create dft files
+        os.chdir('dft')
+    
+        f=open(str(key)+".xyz", 'w')
+        f.write(str(m5.GetNumAtoms()))
+        f.write('\n\n')
+        for i in range(4, 4+m5.GetNumAtoms()):
+            jj=' '.join((ii[i].split()))
+            kk=jj.split()
+            f.write("{}\t{:>8}  {:>8}  {:>8}\n".format(kk[3], kk[0], kk[1], kk[2]))
+        f.close()
+        _write_nw_file(key, m5)
+
         out_file = str(key) +'_nwchem.out'
-        os.system("mpirun -np 2 --allow-run-as-root nwchem *.nw > {}".format(out_file))
+        if hpc:
+            run_list.append(str(key))  
+        else:
+            os.system("mpirun -np 2 --allow-run-as-root nwchem *.nw > {}".format(out_file))
         os.chdir('../..')
+
+    if hpc:
+        _run_hpc(run_list, callback_url, token)
+    os.chdir('..') 

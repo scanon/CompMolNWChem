@@ -67,15 +67,13 @@ def getMullikenCharge(open_file, nAtoms):
     return output
 
 def calculate(InChI_key):
-    os.chdir('../..')
-    cwd = os.getcwd()
 
-    dft_dir    =  InChI_key + '/' + 'dft'
+    #dft_dir    =  InChI_key + '/' + 'dft'
     prop_file = InChI_key + '_prop.xyz'  
 
 
     matches = []
-    os.chdir(dft_dir)
+    #os.chdir(dft_dir)
     pattern = InChI_key+'_nwchem.out'
     index=pattern.split('.')[1]
     matches.append(pattern)
@@ -136,5 +134,5 @@ def calculate(InChI_key):
                     ff.write(cde)
 
                 ff.close()
-            os.chdir('../../')
+            #os.chdir('../../')
 

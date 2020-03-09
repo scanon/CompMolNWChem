@@ -1,0 +1,40 @@
+title "cpd01055"
+start cpd01055
+
+memory global 1600 mb heap 100 mb stack 600 mb
+
+permanent_dir /kb/module/work/tmp/simulation/cpd01055/dft
+#scratch_dir /scratch
+
+echo
+print low
+
+charge 0
+geometry noautoz noautosym
+load /kb/module/work/tmp/simulation/cpd01055/dft/cpd01055.xyz
+end
+basis
+* library 6-31G*
+end
+
+driver
+ maxiter 50
+xyz cpd01055_geom
+end
+
+set lindep:n_dep 0
+
+dft
+  maxiter 100
+  xc b3lyp
+  mulliken
+  print "mulliken ao"
+  print "final vectors analysis"
+end
+
+task dft optimize ignore
+property
+ dipole
+end
+
+task dft property

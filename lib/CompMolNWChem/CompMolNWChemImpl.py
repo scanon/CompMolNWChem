@@ -109,11 +109,11 @@ class CompMolNWChem:
         if not isinstance(params['Input_File'], str):
             raise ValueError('Input_File must be a string')
 
-    def _read_inputs(self, params, token):
+    def _read_inputs(self, params):
         # Load the tsv file into a compound set using DataFileUtil methods
         # uri = 'https://appdev.kbase.us/services/staging_service/download/%s' % (params['Input_File'])
         uri = '%s/download/%s' % (self.staging, params['Input_File'])
-        tsv = requests.get(uri, headers={'Authorization':  token})
+        tsv = requests.get(uri, headers={'Authorization':  self.token})
         if tsv.status_code != 200:
              print(tsv)
              print(uri)
@@ -126,7 +126,7 @@ class CompMolNWChem:
         #scratch_file_path = self.dfu.download_staging_file({'staging_file_subdir_path':params['Input_File']}
         #                               ).get('copy_file_path')
 
-        #print('Scratch File Path: ',scratch_file_path)
+        #print('Scratch File Path: ', scratch_file_path)
 
         mol2_file_dir = None        
         ext = os.path.splitext(scratch_file_path)[1]
@@ -162,31 +162,72 @@ class CompMolNWChem:
         #print(ids)
         #print(smiles)
 
-        # Read the ids and structures of the compounds
-        
-        its.inchi_to_dft(ids,smiles)
+        # Read the ids and structures of the compounds (run nwchem)
+       
+        its.inchi_to_dft(ids, smiles, hpc=self.hpc,
+                         callback_url=self.callback_url,
+                         token=self.token)
 
         #DEBUG::
         #os.system('pwd')
         #os.system('ls')
         
         length = len(ids)
+        os.chdir('simulation')
         for i in range(length):
-            os.chdir('./'+ids[i]+'/dft')
+            print(os.getcwd())
+            os.chdir('./%s/dft' % (ids[i]))
+            print(os.getcwd())
             x = ids[i] + '_nwchem.out'
             #print('x:',x)
             file1 = open(x, 'r')
             nAtoms = mul.getNumberOfAtoms(file1)
             energy = mul.getInternalEnergy0K(file1)
-            charge =mul.getMullikenCharge(file1,nAtoms)
+            charge =mul.getMullikenCharge(file1, nAtoms)
             file1.close()
            
             mul.nAtoms = nAtoms
             mul.E0K = energy
 
             mul.calculate(ids[i])
+            os.chdir('../../')
+        os.chdir('..')
 
 
+    def _build_outputs(self, compoundset):
+        result_directory = './simulation/'
+
+        ## Build CompoundSet with Mol2 Files... similarly to fetch_mol2_files_from_zinc (CompoundSetUtils)....
+
+        compoundset_copy = copy.deepcopy(compoundset)
+
+        count = 0
+        files = []
+        for compound in compoundset_copy.get('compounds'):
+            if not compound.get('mol2_handle_ref'):
+                mol2_file_path = result_directory+compound.get('id')
+                SMILES = compound.get('smiles')
+
+                shutil.move(mol2_file_path, self.scratch)
+
+                os.chdir(self.scratch)
+               
+                mol2_file_path = self.scratch + '/'+ compound.get('id')+'/dft/' + compound.get('id')+'_Mulliken.mol2'              
+                files.append({'file_path': mol2_file_path, 'make_handle': True})
+                #handle_id = self.dfu.file_to_shock({'file_path': mol2_file_path,
+                #                                    'make_handle': True})['handle']['hid']
+                #print('Handle ID:', handle_id)
+                #compound['mol2_handle_ref'] = handle_id
+                count += 1
+        handles = self.dfu.file_to_shock_mass(files)
+        i = 0
+        for compound in compoundset_copy.get('compounds'):
+            h = handles[i]
+            compound['mol2_handle_ref'] = h['handle']['hid']
+            i += 1
+           
+        return compoundset_copy, count
+               
     def _save_to_ws_and_report(self, ws_id, source, compoundset, output_files, message=None):
         """Save compound set to the workspace and make report"""
         info = self.dfu.save_objects(
@@ -228,6 +269,8 @@ class CompMolNWChem:
         self.comp = CompoundSetUtils(self.callback_url)
         self.scratch = config['scratch']
         self.staging = '%s/staging_service' % (config['kbase-endpoint'])
+        self.hpc = False
+        self.token = None
         logging.basicConfig(format='%(created)s %(levelname)s: %(message)s',
                             level=logging.INFO)
         #END_CONSTRUCTOR
@@ -244,45 +287,20 @@ class CompMolNWChem:
         # ctx is the context object
         # return variables are: output
         #BEGIN run_CompMolNWChem
-
+        os.chdir(self.scratch)
         # Initial Tests to Check for Proper Inputs
         self._validate_params(params)
 
-       
+        self.token = ctx['token'] 
         # Prepare inputs 
-        compoundset = self._read_inputs(params, ctx['token'])
+        compoundset = self._read_inputs(params)
 
         # Finish Reading in Compound Set
         self._process(compoundset) 
         
         # Build KBase Output. Should output entire /simulation directory and build a CompoundSet with Mol2 Files
+        compoundset_copy, count = self._build_outputs(compoundset)
 
-        result_directory = '/simulation/'
-
-        ## Build CompoundSet with Mol2 Files... similarly to fetch_mol2_files_from_zinc (CompoundSetUtils)....
-
-        compoundset_copy = copy.deepcopy(compoundset)
-
-        count = 0
-
-        for compound in compoundset_copy.get('compounds'):
-            if not compound.get('mol2_handle_ref'):
-                mol2_file_path = result_directory+compound.get('id')
-                SMILES = compound.get('smiles')
-
-                shutil.move(mol2_file_path,self.scratch)
-
-                os.chdir(self.scratch)
-               
-                mol2_file_path = self.scratch + '/'+ compound.get('id')+'/dft/' + compound.get('id')+'_Mulliken.mol2'              
-                handle_id = self.dfu.file_to_shock({'file_path': mol2_file_path,
-                                                    'make_handle': True})['handle']['hid']
-                print('Handle ID:',handle_id)
-                compound['mol2_handle_ref'] = handle_id
-                count += 1
-
-               
-               
         if count:
             message = 'Successfully fetched {} Mol2 files from Staging Path'.format(count)
 
@@ -290,22 +308,6 @@ class CompMolNWChem:
         ## Create Extended Report
 
         output_files = self._generate_output_file_list(self.scratch)
-
-
-        #report_params = {'message': message,
-        #                 'workspace_id': params['workspace_id'],
-        #                 'objects_created': [],
-        #                 'file_links': output_files,
-        #                 'report_object_name': 'kb_deseq2_report_' + str(uuid.uuid4())}
-
-        #report = KBaseReport(self.callback_url)
-        
-        #report_info = report.create_extended_report(report_params)
-
-        #output = {
-        #    'report_name': report_info['name'],
-        #    'report_ref': report_info['ref'],
-        #}
 
         output = self._save_to_ws_and_report(
             params['workspace_id'],'', compoundset_copy, output_files,
@@ -329,6 +331,8 @@ class CompMolNWChem:
         # ctx is the context object
         # return variables are: output
         #BEGIN run_CompMolNWChem_hpc
+        self.hpc = True
+        output = self.run_CompMolNWChem(ctx, params)[0]
         #END run_CompMolNWChem_hpc
 
         # At some point might do deeper type checking...
