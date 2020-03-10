@@ -36,13 +36,13 @@ def _write_nw_file(key, m5):
         nw.write("title " +'"'+key+'"'+'\n')
         nw.write('start '+key+'\n\n')
         nw.write('memory global 1600 mb heap 100 mb stack 600 mb'+'\n\n')
-        nw.write('permanent_dir ' + os.getcwd()+'\n')
+        nw.write('permanent_dir .') # + os.getcwd()+'\n')
         nw.write('#scratch_dir /scratch'+'\n\n')
         nw.write('echo'+'\n')
         nw.write('print low'+'\n\n')
         nw.write('charge ' + str(rdkit.Chem.rdmolops.GetFormalCharge(m5))+'\n')
         nw.write('geometry noautoz noautosym'+'\n')
-        nw.write('load '+ os.getcwd()+'/'+key+'.xyz'+'\n')
+        nw.write('load {}.xyz\n'.format(key)) # + os.getcwd()+'/'+key+'.xyz'+'\n')
         nw.write('end'+'\n')
         nw.write('basis'+'\n')
         nw.write('* library 6-31G*'+'\n')
@@ -79,14 +79,14 @@ def _run_hpc(run_list, callback_url, token):
     print("Submitting SLURM")
     sr = special(callback_url, token=token)
     with open('slurm.sl', 'w') as f:
-        f.write("#/bin/sh\n")
-        f.write("#SBATCH -c haswell -t 30 -q debug -n 4\n")
+        f.write("#!/bin/sh\n")
+        f.write("#SBATCH -C haswell -t 30 -q debug -n 4\n")
         f.write("#SBATCH --image=scanon/nwchem:latest\n")
         f.write("cd simulation\n")
         for key in run_list:
             out_file = str(key) +'_nwchem.out'
             f.write("cd {}/dft\n".format(str(key)))
-            f.write("srun shifter nwchem *.nw > {}\n".format(out_file))
+            f.write("srun shifter --module=mpich-cle6 nwchem *.nw > {}\n".format(out_file))
             f.write("cd ../..\n")
     p = {'submit_script': './simulation/slurm.sl'}
     res = sr.slurm(p)
