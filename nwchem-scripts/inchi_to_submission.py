@@ -82,12 +82,13 @@ def _run_hpc(run_list, callback_url, token):
         f.write("#/bin/sh\n")
         f.write("#SBATCH -c haswell -t 30 -q debug -n 4\n")
         f.write("#SBATCH --image=scanon/nwchem:latest\n")
+        f.write("cd simulation\n")
         for key in run_list:
             out_file = str(key) +'_nwchem.out'
-            f.write("chdir {}/dft\n".format(str(key)))
+            f.write("cd {}/dft\n".format(str(key)))
             f.write("srun shifter nwchem *.nw > {}\n".format(out_file))
-            f.write("chdir ../..\n")
-    p = {'submit_script': 'slurm.sl'}
+            f.write("cd ../..\n")
+    p = {'submit_script': './simulation/slurm.sl'}
     res = sr.slurm(p)
     print('slurm'+str(res))
 
